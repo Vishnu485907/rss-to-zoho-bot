@@ -36,17 +36,40 @@ def send_to_cliq(title, link, summary):
     message = {
         "text": f"**{title}**\n\n{summary}\n\n[Read more]({link})"
     }
-    response = requests.post(WEBHOOK_URL, json=message)
-    return response.status_code == 200
+    try:
+        response = requests.post(WEBHOOK_URL, json=message, timeout=30)
+        print(f"Zoho API response status: {response.status_code}")
+        if response.status_code != 200:
+            print(f"Zoho API response text: {response.text}")
+        return response.status_code == 200
+    except requests.exceptions.Timeout:
+        print("Request to Zoho Cliq timed out")
+        return False
+    except requests.exceptions.RequestException as e:
+        print(f"Request to Zoho Cliq failed: {e}")
+        return False
 
 def check_feed():
-    feed = feedparser.parse(RSS_FEED_URL)
+    try:
+        feed = feedparser.parse(RSS_FEED_URL)
+        print(f"RSS feed status: {feed.get('status', 'Unknown')}")
+        print(f"Number of entries: {len(feed.entries)}")
+        
+        # Check if feed parsing failed
+        if feed.bozo:  # bozo flag indicates parsing issues
+            print(f"RSS feed parsing error: {feed.bozo_exception}")
+    except Exception as e:
+        print(f"Failed to parse RSS feed: {e}")
+        return 0
+        
     new_entries = 0
     
     for entry in feed.entries:
         entry_id = entry.get('id', entry.link)
+        print(f"Checking entry: {entry.title}")
         
         if not check_if_posted(entry_id):
+            print(f"New entry found: {entry.title}")
             published = entry.get('published_parsed', entry.get('updated_parsed', None))
             if published:
                 published = datetime(*published[:6])
@@ -59,26 +82,18 @@ def check_feed():
                 print(f"Posted new article: {entry.title}")
             else:
                 print(f"Failed to post article: {entry.title}")
+        else:
+            print(f"Already posted: {entry.title}")
     
     return new_entries
 
 if __name__ == "__main__":
     init_db()
     print(f"Starting RSS feed monitor for {RSS_FEED_URL}")
-    print("Press Ctrl+C to stop")
-    
-    while True:
-        try:
-            print(f"{datetime.now()}: Checking feed...")
-            new_count = check_feed()
-            if new_count > 0:
-                print(f"Posted {new_count} new articles")
-            else:
-                print("No new articles found")
-            time.sleep(600)
-        except KeyboardInterrupt:
-            print("Stopping RSS feed monitor")
-            break
-        except Exception as e:
-            print(f"Error occurred: {e}")
-            time.sleep(600)
+    print(f"{datetime.now()}: Checking feed...")
+    new_count = check_feed()
+    if new_count > 0:
+        print(f"Successfully posted {new_count} new articles")
+    else:
+        print("No new articles found")
+    print("RSS check completed")
