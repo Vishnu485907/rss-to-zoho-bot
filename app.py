@@ -9,28 +9,42 @@ RSS_FEED_URL = "https://rss.app/feeds/_uK2pJPoyCu8mMUt2.xml"
 WEBHOOK_URL = "https://cliq.zoho.com/api/v2/channelsbyname/newsfeeda/message?zapikey=1001.df712eb8183bd653ba1a000217fd5cd7.4bf31cee4acba2c6e939d97f40e4d6fa"
 
 def init_db():
-    conn = sqlite3.connect('rss_feed.db')
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS posted_articles
-                 (id TEXT PRIMARY KEY, title TEXT, link TEXT, published TIMESTAMP)''')
-    conn.commit()
-    conn.close()
+    try:
+        conn = sqlite3.connect('rss_feed.db')
+        c = conn.cursor()
+        c.execute('''CREATE TABLE IF NOT EXISTS posted_articles
+                     (id TEXT PRIMARY KEY, title TEXT, link TEXT, published TIMESTAMP)''')
+        conn.commit()
+        conn.close()
+        print("Database initialized successfully")
+    except Exception as e:
+        print(f"Database error: {e}")
+        raise
 
 def check_if_posted(entry_id):
-    conn = sqlite3.connect('rss_feed.db')
-    c = conn.cursor()
-    c.execute("SELECT id FROM posted_articles WHERE id=?", (entry_id,))
-    result = c.fetchone()
-    conn.close()
-    return result is not None
+    try:
+        conn = sqlite3.connect('rss_feed.db')
+        c = conn.cursor()
+        c.execute("SELECT id FROM posted_articles WHERE id=?", (entry_id,))
+        result = c.fetchone()
+        conn.close()
+        return result is not None
+    except Exception as e:
+        print(f"Database query error: {e}")
+        return False
 
 def mark_as_posted(entry_id, title, link, published):
-    conn = sqlite3.connect('rss_feed.db')
-    c = conn.cursor()
-    c.execute("INSERT INTO posted_articles (id, title, link, published) VALUES (?, ?, ?, ?)",
-              (entry_id, title, link, published))
-    conn.commit()
-    conn.close()
+    try:
+        conn = sqlite3.connect('rss_feed.db')
+        c = conn.cursor()
+        c.execute("INSERT INTO posted_articles (id, title, link, published) VALUES (?, ?, ?, ?)",
+                  (entry_id, title, link, published))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"Database insert error: {e}")
+        return False
 
 def send_to_cliq(title, link, summary):
     message = {
@@ -51,6 +65,7 @@ def send_to_cliq(title, link, summary):
 
 def check_feed():
     try:
+        print("Parsing RSS feed...")
         feed = feedparser.parse(RSS_FEED_URL)
         print(f"RSS feed status: {feed.get('status', 'Unknown')}")
         print(f"Number of entries: {len(feed.entries)}")
@@ -58,15 +73,16 @@ def check_feed():
         # Check if feed parsing failed
         if feed.bozo:  # bozo flag indicates parsing issues
             print(f"RSS feed parsing error: {feed.bozo_exception}")
+            return 0
     except Exception as e:
         print(f"Failed to parse RSS feed: {e}")
         return 0
         
     new_entries = 0
     
-    for entry in feed.entries:
+    for i, entry in enumerate(feed.entries):
+        print(f"Processing entry {i+1}/{len(feed.entries)}")
         entry_id = entry.get('id', entry.link)
-        print(f"Checking entry: {entry.title}")
         
         if not check_if_posted(entry_id):
             print(f"New entry found: {entry.title}")
@@ -77,23 +93,32 @@ def check_feed():
             success = send_to_cliq(entry.title, entry.link, entry.summary)
             
             if success:
-                mark_as_posted(entry_id, entry.title, entry.link, published)
-                new_entries += 1
-                print(f"Posted new article: {entry.title}")
+                if mark_as_posted(entry_id, entry.title, entry.link, published):
+                    new_entries += 1
+                    print(f"Posted new article: {entry.title}")
+                else:
+                    print(f"Failed to save article to database: {entry.title}")
             else:
-                print(f"Failed to post article: {entry.title}")
+                print(f"Failed to post article to Zoho: {entry.title}")
         else:
             print(f"Already posted: {entry.title}")
     
     return new_entries
 
 if __name__ == "__main__":
-    init_db()
-    print(f"Starting RSS feed monitor for {RSS_FEED_URL}")
-    print(f"{datetime.now()}: Checking feed...")
-    new_count = check_feed()
-    if new_count > 0:
-        print(f"Successfully posted {new_count} new articles")
-    else:
-        print("No new articles found")
-    print("RSS check completed")
+    try:
+        print("Starting RSS feed monitor...")
+        init_db()
+        print(f"Checking feed: {RSS_FEED_URL}")
+        print(f"Current time: {datetime.now()}")
+        new_count = check_feed()
+        if new_count > 0:
+            print(f"Successfully posted {new_count} new articles")
+        else:
+            print("No new articles found")
+        print("RSS check completed successfully")
+    except Exception as e:
+        print(f"Critical error: {e}")
+        import traceback
+        traceback.print_exc()
+        exit(1)
