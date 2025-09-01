@@ -1,7 +1,6 @@
 import feedparser
 import requests
 import sqlite3
-import time
 import os
 from datetime import datetime
 
@@ -16,10 +15,11 @@ def init_db():
                      (id TEXT PRIMARY KEY, title TEXT, link TEXT, published TIMESTAMP)''')
         conn.commit()
         conn.close()
-        print("Database initialized successfully")
+        print("✓ Database initialized successfully")
+        return True
     except Exception as e:
-        print(f"Database error: {e}")
-        raise
+        print(f"✗ Database error: {e}")
+        return False
 
 def check_if_posted(entry_id):
     try:
@@ -30,7 +30,7 @@ def check_if_posted(entry_id):
         conn.close()
         return result is not None
     except Exception as e:
-        print(f"Database query error: {e}")
+        print(f"✗ Database query error: {e}")
         return False
 
 def mark_as_posted(entry_id, title, link, published):
@@ -43,82 +43,98 @@ def mark_as_posted(entry_id, title, link, published):
         conn.close()
         return True
     except Exception as e:
-        print(f"Database insert error: {e}")
+        print(f"✗ Database insert error: {e}")
         return False
 
 def send_to_cliq(title, link, summary):
+    # Truncate summary if it's too long
+    if summary and len(summary) > 500:
+        summary = summary[:500] + "..."
+    
     message = {
         "text": f"**{title}**\n\n{summary}\n\n[Read more]({link})"
     }
+    
     try:
         response = requests.post(WEBHOOK_URL, json=message, timeout=30)
-        print(f"Zoho API response status: {response.status_code}")
-        if response.status_code != 200:
-            print(f"Zoho API response text: {response.text}")
+        print(f"✓ Zoho API response status: {response.status_code}")
         return response.status_code == 200
     except requests.exceptions.Timeout:
-        print("Request to Zoho Cliq timed out")
+        print("✗ Request to Zoho Cliq timed out")
         return False
     except requests.exceptions.RequestException as e:
-        print(f"Request to Zoho Cliq failed: {e}")
+        print(f"✗ Request to Zoho Cliq failed: {e}")
+        return False
+    except Exception as e:
+        print(f"✗ Unexpected error sending to Zoho: {e}")
         return False
 
 def check_feed():
     try:
-        print("Parsing RSS feed...")
+        print("📡 Parsing RSS feed...")
         feed = feedparser.parse(RSS_FEED_URL)
-        print(f"RSS feed status: {feed.get('status', 'Unknown')}")
-        print(f"Number of entries: {len(feed.entries)}")
+        print(f"✓ RSS feed status: {feed.get('status', 'Unknown')}")
+        print(f"✓ Number of entries: {len(feed.entries)}")
         
-        # Check if feed parsing failed
-        if feed.bozo:  # bozo flag indicates parsing issues
-            print(f"RSS feed parsing error: {feed.bozo_exception}")
+        if not feed.entries:
+            print("ℹ No entries found in RSS feed")
             return 0
+            
     except Exception as e:
-        print(f"Failed to parse RSS feed: {e}")
+        print(f"✗ Failed to parse RSS feed: {e}")
         return 0
         
     new_entries = 0
     
     for i, entry in enumerate(feed.entries):
-        print(f"Processing entry {i+1}/{len(feed.entries)}")
-        entry_id = entry.get('id', entry.link)
+        print(f"📄 Processing entry {i+1}/{len(feed.entries)}")
+        
+        # Get entry ID or use link as fallback
+        entry_id = entry.get('id', entry.get('link', f"entry_{i}"))
+        title = entry.get('title', 'No title')
         
         if not check_if_posted(entry_id):
-            print(f"New entry found: {entry.title}")
-            published = entry.get('published_parsed', entry.get('updated_parsed', None))
+            print(f"🆕 New entry found: {title}")
+            
+            # Get publication date
+            published = entry.get('published_parsed') or entry.get('updated_parsed')
             if published:
                 published = datetime(*published[:6])
+            else:
+                published = datetime.now()
             
-            success = send_to_cliq(entry.title, entry.link, entry.summary)
+            # Send to Zoho Cliq
+            summary = entry.get('summary', entry.get('description', 'No summary available'))
+            success = send_to_cliq(title, entry.link, summary)
             
             if success:
-                if mark_as_posted(entry_id, entry.title, entry.link, published):
+                # Save to database
+                if mark_as_posted(entry_id, title, entry.link, published):
                     new_entries += 1
-                    print(f"Posted new article: {entry.title}")
+                    print(f"✅ Posted: {title}")
                 else:
-                    print(f"Failed to save article to database: {entry.title}")
+                    print(f"❌ Failed to save to database: {title}")
             else:
-                print(f"Failed to post article to Zoho: {entry.title}")
+                print(f"❌ Failed to post to Zoho: {title}")
         else:
-            print(f"Already posted: {entry.title}")
+            print(f"ℹ Already posted: {title}")
     
     return new_entries
 
 if __name__ == "__main__":
-    try:
-        print("Starting RSS feed monitor...")
-        init_db()
-        print(f"Checking feed: {RSS_FEED_URL}")
-        print(f"Current time: {datetime.now()}")
+    print("🚀 Starting RSS to Zoho Cliq Bot")
+    print("=" * 50)
+    
+    if init_db():
         new_count = check_feed()
+        print("=" * 50)
+        
         if new_count > 0:
-            print(f"Successfully posted {new_count} new articles")
+            print(f"✅ Successfully posted {new_count} new articles")
         else:
-            print("No new articles found")
-        print("RSS check completed successfully")
-    except Exception as e:
-        print(f"Critical error: {e}")
-        import traceback
-        traceback.print_exc()
+            print("ℹ No new articles found")
+        
+        print("✅ Script completed successfully")
+    else:
+        print("❌ Script failed due to database error")
         exit(1)
