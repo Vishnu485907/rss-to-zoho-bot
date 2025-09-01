@@ -1,6 +1,7 @@
 import feedparser
 import requests
 import sqlite3
+import time
 import os
 from datetime import datetime
 
@@ -16,10 +17,9 @@ def init_db():
         conn.commit()
         conn.close()
         print("Database initialized successfully")
-        return True
     except Exception as e:
         print(f"Database error: {e}")
-        return False
+        raise
 
 def check_if_posted(entry_id):
     try:
@@ -47,20 +47,20 @@ def mark_as_posted(entry_id, title, link, published):
         return False
 
 def send_to_cliq(title, link, summary):
-    # Truncate summary if it's too long
-    if summary and len(summary) > 500:
-        summary = summary[:500] + "..."
-    
     message = {
         "text": f"**{title}**\n\n{summary}\n\n[Read more]({link})"
     }
-    
     try:
         response = requests.post(WEBHOOK_URL, json=message, timeout=30)
         print(f"Zoho API response status: {response.status_code}")
+        if response.status_code != 200:
+            print(f"Zoho API response text: {response.text}")
         return response.status_code == 200
-    except Exception as e:
-        print(f"Error sending to Zoho: {e}")
+    except requests.exceptions.Timeout:
+        print("Request to Zoho Cliq timed out")
+        return False
+    except requests.exceptions.RequestException as e:
+        print(f"Request to Zoho Cliq failed: {e}")
         return False
 
 def check_feed():
@@ -70,10 +70,10 @@ def check_feed():
         print(f"RSS feed status: {feed.get('status', 'Unknown')}")
         print(f"Number of entries: {len(feed.entries)}")
         
-        if not feed.entries:
-            print("No entries found in RSS feed")
+        # Check if feed parsing failed
+        if feed.bozo:  # bozo flag indicates parsing issues
+            print(f"RSS feed parsing error: {feed.bozo_exception}")
             return 0
-            
     except Exception as e:
         print(f"Failed to parse RSS feed: {e}")
         return 0
@@ -82,47 +82,43 @@ def check_feed():
     
     for i, entry in enumerate(feed.entries):
         print(f"Processing entry {i+1}/{len(feed.entries)}")
-        
-        # Get entry ID or use link as fallback
-        entry_id = entry.get('id', entry.get('link', f"entry_{i}"))
-        title = entry.get('title', 'No title')
+        entry_id = entry.get('id', entry.link)
         
         if not check_if_posted(entry_id):
-            print(f"New entry found: {title}")
+            print(f"New entry found: {entry.title}")
+            published = entry.get('published_parsed', entry.get('updated_parsed', None))
+            if published:
+                published = datetime(*published[:6])
             
-            # Get publication date (use current time if not available)
-            published = datetime.now()
-            
-            # Send to Zoho Cliq
-            summary = entry.get('summary', entry.get('description', 'No summary available'))
-            success = send_to_cliq(title, entry.link, summary)
+            success = send_to_cliq(entry.title, entry.link, entry.summary)
             
             if success:
-                # Save to database
-                if mark_as_posted(entry_id, title, entry.link, published):
+                if mark_as_posted(entry_id, entry.title, entry.link, published):
                     new_entries += 1
-                    print(f"Posted: {title}")
+                    print(f"Posted new article: {entry.title}")
                 else:
-                    print(f"Failed to save to database: {title}")
+                    print(f"Failed to save article to database: {entry.title}")
             else:
-                print(f"Failed to post to Zoho: {title}")
+                print(f"Failed to post article to Zoho: {entry.title}")
         else:
-            print(f"Already posted: {title}")
+            print(f"Already posted: {entry.title}")
     
     return new_entries
 
 if __name__ == "__main__":
-    print("Starting RSS to Zoho Cliq Bot")
-    
-    if init_db():
+    try:
+        print("Starting RSS feed monitor...")
+        init_db()
+        print(f"Checking feed: {RSS_FEED_URL}")
+        print(f"Current time: {datetime.now()}")
         new_count = check_feed()
-        
         if new_count > 0:
             print(f"Successfully posted {new_count} new articles")
         else:
             print("No new articles found")
-        
-        print("Script completed successfully")
-    else:
-        print("Script failed due to database error")
+        print("RSS check completed successfully")
+    except Exception as e:
+        print(f"Critical error: {e}")
+        import traceback
+        traceback.print_exc()
         exit(1)
