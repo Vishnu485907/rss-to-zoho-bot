@@ -15,10 +15,10 @@ def init_db():
                      (id TEXT PRIMARY KEY, title TEXT, link TEXT, published TIMESTAMP)''')
         conn.commit()
         conn.close()
-        print("✓ Database initialized successfully")
+        print("Database initialized successfully")
         return True
     except Exception as e:
-        print(f"✗ Database error: {e}")
+        print(f"Database error: {e}")
         return False
 
 def check_if_posted(entry_id):
@@ -30,7 +30,7 @@ def check_if_posted(entry_id):
         conn.close()
         return result is not None
     except Exception as e:
-        print(f"✗ Database query error: {e}")
+        print(f"Database query error: {e}")
         return False
 
 def mark_as_posted(entry_id, title, link, published):
@@ -43,7 +43,7 @@ def mark_as_posted(entry_id, title, link, published):
         conn.close()
         return True
     except Exception as e:
-        print(f"✗ Database insert error: {e}")
+        print(f"Database insert error: {e}")
         return False
 
 def send_to_cliq(title, link, summary):
@@ -57,51 +57,41 @@ def send_to_cliq(title, link, summary):
     
     try:
         response = requests.post(WEBHOOK_URL, json=message, timeout=30)
-        print(f"✓ Zoho API response status: {response.status_code}")
+        print(f"Zoho API response status: {response.status_code}")
         return response.status_code == 200
-    except requests.exceptions.Timeout:
-        print("✗ Request to Zoho Cliq timed out")
-        return False
-    except requests.exceptions.RequestException as e:
-        print(f"✗ Request to Zoho Cliq failed: {e}")
-        return False
     except Exception as e:
-        print(f"✗ Unexpected error sending to Zoho: {e}")
+        print(f"Error sending to Zoho: {e}")
         return False
 
 def check_feed():
     try:
-        print("📡 Parsing RSS feed...")
+        print("Parsing RSS feed...")
         feed = feedparser.parse(RSS_FEED_URL)
-        print(f"✓ RSS feed status: {feed.get('status', 'Unknown')}")
-        print(f"✓ Number of entries: {len(feed.entries)}")
+        print(f"RSS feed status: {feed.get('status', 'Unknown')}")
+        print(f"Number of entries: {len(feed.entries)}")
         
         if not feed.entries:
-            print("ℹ No entries found in RSS feed")
+            print("No entries found in RSS feed")
             return 0
             
     except Exception as e:
-        print(f"✗ Failed to parse RSS feed: {e}")
+        print(f"Failed to parse RSS feed: {e}")
         return 0
         
     new_entries = 0
     
     for i, entry in enumerate(feed.entries):
-        print(f"📄 Processing entry {i+1}/{len(feed.entries)}")
+        print(f"Processing entry {i+1}/{len(feed.entries)}")
         
         # Get entry ID or use link as fallback
         entry_id = entry.get('id', entry.get('link', f"entry_{i}"))
         title = entry.get('title', 'No title')
         
         if not check_if_posted(entry_id):
-            print(f"🆕 New entry found: {title}")
+            print(f"New entry found: {title}")
             
-            # Get publication date
-            published = entry.get('published_parsed') or entry.get('updated_parsed')
-            if published:
-                published = datetime(*published[:6])
-            else:
-                published = datetime.now()
+            # Get publication date (use current time if not available)
+            published = datetime.now()
             
             # Send to Zoho Cliq
             summary = entry.get('summary', entry.get('description', 'No summary available'))
@@ -111,30 +101,28 @@ def check_feed():
                 # Save to database
                 if mark_as_posted(entry_id, title, entry.link, published):
                     new_entries += 1
-                    print(f"✅ Posted: {title}")
+                    print(f"Posted: {title}")
                 else:
-                    print(f"❌ Failed to save to database: {title}")
+                    print(f"Failed to save to database: {title}")
             else:
-                print(f"❌ Failed to post to Zoho: {title}")
+                print(f"Failed to post to Zoho: {title}")
         else:
-            print(f"ℹ Already posted: {title}")
+            print(f"Already posted: {title}")
     
     return new_entries
 
 if __name__ == "__main__":
-    print("🚀 Starting RSS to Zoho Cliq Bot")
-    print("=" * 50)
+    print("Starting RSS to Zoho Cliq Bot")
     
     if init_db():
         new_count = check_feed()
-        print("=" * 50)
         
         if new_count > 0:
-            print(f"✅ Successfully posted {new_count} new articles")
+            print(f"Successfully posted {new_count} new articles")
         else:
-            print("ℹ No new articles found")
+            print("No new articles found")
         
-        print("✅ Script completed successfully")
+        print("Script completed successfully")
     else:
-        print("❌ Script failed due to database error")
+        print("Script failed due to database error")
         exit(1)
